@@ -41,8 +41,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone <你的仓库地址>
-cd AI创作平板助手
+git clone https://github.com/XinXinDaddy/ai-creative-tablet-assistant.git
+cd ai-creative-tablet-assistant
 
 # 2. 安装依赖
 npm install
