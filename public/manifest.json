@@ -1,0 +1,10 @@
+{
+  "name": "AI创作平板画布",
+  "short_name": "AI创作画布",
+  "description": "与PC端剪贴板实时联动的AI视觉提示词与绘画平板工作台",
+  "start_url": "/tablet",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1120",
+  "theme_color": "#0b1120"
+}

@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 创作平板助手 - PC 控制台</title>
+  <style>
+    :root {
+      --bg-base: #0b1120;
+      --bg-card: #131c31;
+      --bg-card-hover: #1a2642;
+      --border: #263554;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --accent: #8b5cf6;
+      --emerald: #10b981;
+      --amber: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at top right, #172554 0%, var(--bg-base) 55%);
+      color: var(--text-main);
+      min-height: 100vh;
+      padding: 20px 28px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 18px;
+      margin-bottom: 22px;
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+      gap: 14px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      box-shadow: 0 4px 15px rgba(59, 130, 246, 0.35);
+    }
+
+    .brand h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+
+    .brand p {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-muted);
+    }
+
+    .dot.online {
+      background: var(--emerald);
+      box-shadow: 0 0 10px var(--emerald);
+    }
+
+    .dot.waiting {
+      background: var(--amber);
+      box-shadow: 0 0 8px var(--amber);
+    }
+
+    /* 开关样式 */
+    .switch-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 14px;
+      border-radius: 999px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      user-select: none;
+      font-size: 13px;
+    }
+
+    .switch-wrap input {
+      display: none;
+    }
+
+    .switch-slider {
+      width: 38px;
+      height: 20px;
+      background: #334155;
+      border-radius: 999px;
+      position: relative;
+      transition: 0.25s;
+    }
+
+    .switch-slider::after {
+      content: "";
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      transition: 0.25s;
+    }
+
+    .switch-wrap input:checked + .switch-slider {
+      background: var(--emerald);
+    }
+
+    .switch-wrap input:checked + .switch-slider::after {
+      transform: translateX(18px);
+    }
+
+    .grid-layout {
+      display: grid;
+      grid-template-columns: 390px 1fr;
+      gap: 22px;
+      align-items: start;
+    }
+
+    @media (max-width: 1024px) {
+      .grid-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      padding: 12px 16px;
+      border-radius: 11px;
+      font-size: 14px;
+      font-weight: 600;
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      color: #fff;
+      text-decoration: none;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary), #1d4ed8);
+      box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, #60a5fa, var(--primary));
+    }
+
+    .btn-accent {
+      background: linear-gradient(135deg, var(--accent), #6d28d9);
+      box-shadow: 0 4px 14px rgba(139, 92, 246, 0.35);
+    }
+
+    .btn-accent:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-emerald {
+      background: linear-gradient(135deg, var(--emerald), #059669);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-outline {
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--border);
+      color: var(--text-main);
+    }
+
+    .btn-outline:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .drop-zone {
+      margin-top: 12px;
+      border: 1.5px dashed #3b4f76;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      cursor: pointer;
+      transition: 0.2s;
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--primary);
+      color: var(--text-main);
+      background: rgba(59, 130, 246, 0.08);
+    }
+
+    .qr-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: rgba(15, 23, 42, 0.55);
+      padding: 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+    }
+
+    .qr-box img {
+      width: 200px;
+      height: 200px;
+      border-radius: 10px;
+      background: #fff;
+      padding: 6px;
+      margin-bottom: 12px;
+    }
+
+    .ip-select {
+      width: 100%;
+      background: #0f172a;
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 13px;
+      margin-bottom: 10px;
+    }
+
+    .url-bar {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      padding: 7px 10px;
+      border-radius: 8px;
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: #60a5fa;
+      word-break: break-all;
+    }
+
+    .preview-stage {
+      background: #090d16;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      min-height: 400px;
+      max-height: 560px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+      padding: 12px;
+    }
+
+    .preview-stage img {
+      max-width: 100%;
+      max-height: 530px;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .empty-hint {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .clipboard-banner {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(16, 185, 129, 0.14);
+      border: 1px solid rgba(16, 185, 129, 0.45);
+      color: #a7f3d0;
+      padding: 12px 16px;
+      border-radius: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+
+    .clipboard-banner.active {
+      display: flex;
+    }
+
+    .prompt-helper {
+      margin-top: 16px;
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .prompt-helper-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .prompt-textarea {
+      width: 100%;
+      min-height: 68px;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-main);
+      padding: 10px;
+      font-size: 13px;
+      line-height: 1.5;
+      resize: vertical;
+      font-family: inherit;
+    }
+
+    .prompt-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 9px;
+    }
+
+    .prompt-chip {
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(59, 130, 246, 0.15);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #93c5fd;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+
+    .prompt-chip:hover {
+      background: rgba(59, 130, 246, 0.3);
+    }
+
+    .history-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .history-item {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: 0.18s;
+    }
+
+    .history-item:hover {
+      border-color: var(--primary);
+      transform: translateY(-2px);
+    }
+
+    .history-thumb {
+      height: 100px;
+      background: #060911;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .history-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .history-meta {
+      padding: 8px;
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .badge-dir {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .badge-dir.to-tablet {
+      background: rgba(59, 130, 246, 0.2);
+      color: #93c5fd;
+    }
+
+    .badge-dir.to-pc {
+      background: rgba(16, 185, 129, 0.2);
+      color: #6ee7b7;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #1e293b;
+      border: 1px solid var(--primary);
+      color: #fff;
+      padding: 12px 18px;
+      border-radius: 12px;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+      font-size: 14px;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: 0.25s ease;
+      z-index: 9999;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <header class="header">
+    <div class="brand">
+      <div class="brand-icon">🎨</div>
+      <div>
+        <h1>AI 创作平板助手 · PC 协同控制台</h1>
+        <p>PC 截图/复制图片 ➔ 安卓平板手绘与标注 ➔ 自动写回 PC 剪贴板粘贴至 AI Agent</p>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div class="pill">
+        <span id="wsDot" class="dot"></span>
+        <span id="wsText">服务连接中...</span>
+      </div>
+      <div class="pill">
+        <span id="tabletDot" class="dot waiting"></span>
+        <span id="tabletCountText">等待安卓平板扫码连接 (0 台)</span>
+      </div>
+      <label class="switch-wrap" title="开启后，只要你在 PC 截图或复制新图片，将自动推送到平板画布">
+        <input type="checkbox" id="autoSyncToggle" />
+        <span class="switch-slider"></span>
+        <span>自动同步 PC 剪贴板新图片</span>
+      </label>
+    </div>
+  </header>
+
+  <main class="grid-layout">
+    <!-- 左侧：发送控制与扫码连接 -->
+    <div>
+      <section class="card">
+        <div class="card-title">
+          <span>📤 第一步：发送图片到安卓平板</span>
+          <span style="font-size:12px;color:var(--text-muted);font-weight:400;">支持快捷键 Ctrl+V</span>
+        </div>
+
+        <div class="btn-group">
+          <button class="btn btn-primary" id="btnPushClipboard">
+            📋 读取 PC 剪贴板图片并发送到平板
+          </button>
+
+          <button class="btn btn-accent" id="btnSnipAndPush">
+            ✂️ 调用系统区域截图 (Win+Shift+S) 并直达平板
+          </button>
+
+          <div class="btn-row">
+            <button class="btn btn-outline" id="btnBlankCanvas">
+              📄 推送空白画布 (16:9)
+            </button>
+            <button class="btn btn-outline" id="btnOpenTabletPreview" target="_blank">
+              🗔 本机预览平板端
+            </button>
+          </div>
+        </div>
+
+        <div class="drop-zone" id="dropZone">
+          <div>📁 点击选择图片文件、拖拽图片到此处，或直接按 <b>Ctrl + V</b> 粘贴发送</div>
+          <input type="file" id="fileInput" accept="image/*" style="display:none" />
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <span>📱 安卓平板扫码连接 (同一局域网/Wi-Fi)</span>
+        </div>
+
+        <div class="qr-box">
+          <select id="ipSelect" class="ip-select" title="如果有多张网卡，可切换局域网 IP"></select>
+          <img id="qrImage" src="" alt="扫码打开平板画布" />
+          <div class="url-bar">
+            <span id="tabletUrlText" style="flex:1;">http://...</span>
+            <button class="btn btn-outline" id="btnCopyUrl" style="padding:4px 8px;font-size:11px;">复制链接</button>
+          </div>
+          <p style="font-size:12px;color:var(--text-muted);margin-top:10px;text-align:center;">
+            💡 平板用 Chrome / Edge 浏览器扫码打开后，点击浏览器菜单「添加到主屏幕」即可获得全屏原生 App 体验
+          </p>
+        </div>
+      </section>
+    </div>
+
+    <!-- 右侧：实时画布回传与 AI Prompt 辅助 -->
+    <div>
+      <section class="card">
+        <div class="card-title">
+          <span id="stageTitle">📥 第二步：平板回传预览与 AI 对话粘贴区</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-emerald" id="btnReCopyClipboard" style="padding:7px 12px;font-size:12px;" disabled>
+              📋 重新写入系统剪贴板
+            </button>
+            <button class="btn btn-outline" id="btnResendToTablet" style="padding:7px 12px;font-size:12px;" disabled title="保留分层笔画，发回平板后可继续绘制或移除旧笔画">
+              🔄 再次发回平板编辑
+            </button>
+            <button class="btn btn-outline" id="btnResendCleanBase" style="padding:7px 12px;font-size:12px;" disabled title="剥离之前添加的所有笔画与标记，仅发送纯净原图到平板">
+              🧹 仅发纯净底图到平板
+            </button>
+            <a class="btn btn-outline" id="btnDownloadImg" style="padding:7px 12px;font-size:12px;display:none;" download="ai_annotated.png">
+              💾 保存图片
+            </a>
+          </div>
+        </div>
+
+        <div class="clipboard-banner" id="clipboardBanner">
+          <div>
+            <strong>✅ 平板编辑后的图片已自动放入 Windows 剪贴板！</strong>
+            <span id="bannerTime" style="margin-left:8px;font-size:12px;opacity:0.85;"></span>
+            <div style="font-size:12px;margin-top:3px;">
+              现在直接切换到你的 AI Agent 聊天框（如 Cursor / Antigravity / Claude / ChatGPT）按 <b>Ctrl + V</b> 即可粘贴图片！
+            </div>
+          </div>
+        </div>
+
+        <div class="preview-stage" id="previewStage">
+          <div class="empty-hint" id="emptyHint">
+            <div style="font-size:36px;margin-bottom:8px;">🖼️</div>
+            <div>暂未收到或发送图片</div>
+            <div style="font-size:12px;margin-top:4px;">在左侧点击「读取 PC 剪贴板」或「区域截图」，即可在平板上开始绘制和标注</div>
+          </div>
+          <img id="previewImg" style="display:none;" alt="画布预览" />
+        </div>
+
+        <!-- 专为 AI Agent 对话设计的视觉提示词生成框 -->
+        <div class="prompt-helper">
+          <div class="prompt-helper-header">
+            <span>🤖 <b>AI 视觉提示词 (Visual Prompt) 辅助草稿箱</b>（配合平板上的 ①②③ 序号标记使用效果极佳）</span>
+            <button class="btn btn-outline" id="btnCopyPrompt" style="padding:4px 10px;font-size:12px;">
+              📄 复制提示词文本
+            </button>
+          </div>
+          <textarea id="promptInput" class="prompt-textarea" placeholder="当你在平板上使用 ① ② ③ 序号标记或文字批注后，这里会自动生成指代模板；你也可以点击下方快捷标签组合 Prompt..."></textarea>
+          <div class="prompt-tags">
+            <span class="prompt-chip" data-tpl="请参考我上传的图片，重点修改红色框选/箭头指向的区域：">🎯 修改红框/箭头区域</span>
+            <span class="prompt-chip" data-tpl="请看图中的序号标记：将 ① 处的元素调整到 ② 的位置，并保持整体风格一致。">🔢 序号 ①➔② 布局调整</span>
+            <span class="prompt-chip" data-tpl="请根据我在图片上的手绘草图和颜色填充区域，生成对应的前端 UI 代码 / 视觉设计：">🎨 草图转 UI 代码/生图</span>
+            <span class="prompt-chip" data-tpl="图中标注 ① 的部分存在视觉/逻辑问题，请按图中批注文字进行修复：">🛠️ 按图中批注修复 Bug</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title">
+          <span>🕘 最近双向传输记录 (自动覆盖同工程最新进度，点击可写剪贴板或分层发回平板)</span>
+          <button class="btn btn-outline" id="btnClearHistory" style="padding:5px 12px;font-size:12px;color:#fca5a5;border-color:rgba(239,68,68,0.45);">
+            🗑️ 清空记录
+          </button>
+        </div>
+        <div id="historyContainer" class="history-grid">
+          <div style="color:var(--text-muted);font-size:13px;">暂无历史记录</div>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const wsDot = document.getElementById('wsDot');
+    const wsText = document.getElementById('wsText');
+    const tabletDot = document.getElementById('tabletDot');
+    const tabletCountText = document.getElementById('tabletCountText');
+    const autoSyncToggle = document.getElementById('autoSyncToggle');
+    const ipSelect = document.getElementById('ipSelect');
+    const qrImage = document.getElementById('qrImage');
+    const tabletUrlText = document.getElementById('tabletUrlText');
+    const previewImg = document.getElementById('previewImg');
+    const emptyHint = document.getElementById('emptyHint');
+    const clipboardBanner = document.getElementById('clipboardBanner');
+    const bannerTime = document.getElementById('bannerTime');
+    const stageTitle = document.getElementById('stageTitle');
+    const btnReCopyClipboard = document.getElementById('btnReCopyClipboard');
+    const btnResendToTablet = document.getElementById('btnResendToTablet');
+    const btnResendCleanBase = document.getElementById('btnResendCleanBase');
+    const btnClearHistory = document.getElementById('btnClearHistory');
+    const btnDownloadImg = document.getElementById('btnDownloadImg');
+    const promptInput = document.getElementById('promptInput');
+    const historyContainer = document.getElementById('historyContainer');
+
+    let currentPreviewDataUrl = '';
+    let currentPreviewProjectId = '';
+    let currentTabletUrl = '';
+    let historyList = [];
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(() => t.classList.remove('show'), 3200);
+    }
+
+    // 播放轻柔提示音 (Web Audio API 合成，无需外部音频文件)
+    function playNotificationBeep() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+        osc.frequency.setValueAtTime(880, ctx.currentTime + 0.09); // A5
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.28);
+      } catch (_) {}
+    }
+
+    async function loadServerInfo(selectedIp = '') {
+      const url = selectedIp ? `/api/info?ip=${encodeURIComponent(selectedIp)}` : '/api/info';
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.ok) return;
+
+      // 填充网卡列表
+      ipSelect.innerHTML = '';
+      data.ips.forEach((item) => {
+        const opt = document.createElement('option');
+        opt.value = item.address;
+        opt.textContent = `${item.name} (${item.address}) ${item.isVirtual ? '[虚拟网卡]' : '[推荐]'}`;
+        if (item.address === data.selectedIp) opt.selected = true;
+        ipSelect.appendChild(opt);
+      });
+
+      qrImage.src = data.qrDataUrl;
+      currentTabletUrl = data.tabletUrl;
+      tabletUrlText.textContent = data.tabletUrl;
+      autoSyncToggle.checked = Boolean(data.autoSyncClipboard);
+
+      updateClientsUI(data.clients);
+
+      if (data.latestReturnedImage) {
+        renderPreview(data.latestReturnedImage, true);
+      } else if (data.currentImage) {
+        renderPreview(data.currentImage, false);
+      }
+
+      if (Array.isArray(data.history)) {
+        historyList = data.history;
+        renderHistory();
+      }
+    }
+
+    ipSelect.addEventListener('change', () => {
+      loadServerInfo(ipSelect.value);
+    });
+
+    function updateClientsUI(clients) {
+      if (!clients) return;
+      const count = clients.tabletCount || 0;
+      if (count > 0) {
+        tabletDot.className = 'dot online';
+        const names = clients.tablets.map(t => `${t.deviceName} (${t.ip})`).join(', ');
+        tabletCountText.textContent = `已连接安卓平板: ${count} 台 [${names}]`;
+      } else {
+        tabletDot.className = 'dot waiting';
+        tabletCountText.textContent = '等待安卓平板扫码连接 (0 台)';
+      }
+    }
+
+    function renderPreview(item, isReturnedFromTablet) {
+      if (!item || !item.dataUrl) return;
+      currentPreviewDataUrl = item.dataUrl;
+      currentPreviewProjectId = item.projectId || item.id || '';
+      emptyHint.style.display = 'none';
+      previewImg.style.display = 'block';
+      previewImg.src = item.dataUrl;
+
+      btnReCopyClipboard.disabled = false;
+      btnResendToTablet.disabled = false;
+      btnResendCleanBase.disabled = false;
+      btnDownloadImg.style.display = 'inline-flex';
+      btnDownloadImg.href = item.dataUrl;
+
+      if (isReturnedFromTablet || item.direction === 'tablet-to-pc') {
+        stageTitle.textContent = `📥 平板已回传图像 (${item.width || ''}×${item.height || ''} · ${item.timestamp || ''})`;
+        clipboardBanner.classList.add('active');
+        bannerTime.textContent = `回传时间: ${item.timestamp || '刚刚'}`;
+
+        if (item.promptHint) {
+          promptInput.value = item.promptHint;
+        }
+      } else {
+        stageTitle.textContent = `📤 当前已推送至平板的画布 (${item.source || 'PC推送'} · ${item.timestamp || ''})`;
+        clipboardBanner.classList.remove('active');
+      }
+    }
+
+    function resetPreviewUI() {
+      currentPreviewDataUrl = '';
+      currentPreviewProjectId = '';
+      previewImg.style.display = 'none';
+      previewImg.src = '';
+      emptyHint.style.display = 'block';
+      clipboardBanner.classList.remove('active');
+      stageTitle.textContent = '📥 第二步：平板回传预览与 AI 对话粘贴区';
+      btnReCopyClipboard.disabled = true;
+      btnResendToTablet.disabled = true;
+      btnResendCleanBase.disabled = true;
+      btnDownloadImg.style.display = 'none';
+    }
+
+    function addOrUpdateHistory(item) {
+      const pid = item.projectId || item.id;
+      historyList = [
+        item,
+        ...historyList.filter(x => (x.projectId || x.id) !== pid)
+      ].slice(0, 20);
+      renderHistory();
+    }
+
+    function renderHistory() {
+      if (!historyList.length) {
+        historyContainer.innerHTML = '<div style="color:var(--text-muted);font-size:13px;">暂无历史记录</div>';
+        return;
+      }
+      historyContainer.innerHTML = '';
+      historyList.forEach((item) => {
+        const div = document.createElement('div');
+        div.className = 'history-item';
+        const isToPc = item.direction === 'tablet-to-pc';
+        const hasLayers = Boolean(item.hasDrawLayer || (item.strokeRecords && item.strokeRecords.length));
+        const pid = item.projectId || item.id;
+        div.innerHTML = `
+          <div class="history-thumb">
+            <img src="${item.dataUrl}" alt="history" />
+          </div>
+          <div class="history-meta">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+              <span class="badge-dir ${isToPc ? 'to-pc' : 'to-tablet'}">${isToPc ? '平板➔PC' : 'PC➔平板'}</span>
+              <span>${hasLayers ? '📐分层' : ''} ${item.timestamp || ''}</span>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <button class="btn btn-outline btn-copy-hist" style="flex:1;padding:4px;font-size:11px;">写剪贴板</button>
+              <button class="btn btn-outline btn-send-hist" style="flex:1;padding:4px;font-size:11px;" title="保留分层发回平板继续编辑或移除旧笔画">继续编辑</button>
+            </div>
+            ${hasLayers ? '<button class="btn btn-outline btn-strip-hist" style="width:100%;padding:3px;font-size:10px;color:#fcd34d;">🧹 仅发纯净底图到平板</button>' : ''}
+          </div>
+        `;
+        div.querySelector('.btn-copy-hist').addEventListener('click', () => copyDataUrlToSystemClipboard(item.dataUrl));
+        div.querySelector('.btn-send-hist').addEventListener('click', () => pushProjectToTablet(pid, false, item.dataUrl));
+        const stripBtn = div.querySelector('.btn-strip-hist');
+        if (stripBtn) {
+          stripBtn.addEventListener('click', () => pushProjectToTablet(pid, true, item.baseDataUrl || item.dataUrl));
+        }
+        historyContainer.appendChild(div);
+      });
+    }
+
+    // WebSocket 连接
+    function connectWebSocket() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}/?role=pc&device=PC-Console`);
+
+      ws.onopen = () => {
+        wsDot.className = 'dot online';
+        wsText.textContent = '本地实时服务已连接';
+      };
+
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'CLIENTS_STATUS') {
+            updateClientsUI(msg.clients);
+          } else if (msg.type === 'SETTINGS_UPDATED') {
+            autoSyncToggle.checked = Boolean(msg.autoSyncClipboard);
+          } else if (msg.type === 'IMAGE_TO_TABLET') {
+            renderPreview(msg.item, false);
+            addOrUpdateHistory(msg.item);
+            showToast(`📤 已发送至平板 (${msg.item.source})`);
+          } else if (msg.type === 'IMAGE_RETURNED_TO_PC') {
+            renderPreview(msg.item, true);
+            addOrUpdateHistory(msg.item);
+            if (!msg.item.auto) {
+              playNotificationBeep();
+              showToast('✅ 已收到平板回传图片并自动写入 Windows 剪贴板！可直接 Ctrl+V 粘贴到 AI 聊天框');
+            }
+          } else if (msg.type === 'HISTORY_CLEARED') {
+            historyList = [];
+            renderHistory();
+            resetPreviewUI();
+            showToast('🗑️ 已清空所有历史记录与分层工程文件');
+          }
+        } catch (_) {}
+      };
+
+      ws.onclose = () => {
+        wsDot.className = 'dot';
+        wsText.textContent = '服务连接断开，重连中...';
+        setTimeout(connectWebSocket, 2000);
+      };
+    }
+
+    // 按钮事件绑定
+    document.getElementById('btnPushClipboard').addEventListener('click', async () => {
+      const btn = document.getElementById('btnPushClipboard');
+      btn.disabled = true;
+      btn.textContent = '⏳ 正在读取系统剪贴板...';
+      try {
+        const res = await fetch('/api/clipboard/push', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+          showToast('⚠️ ' + (data.error || '读取失败'));
+        }
+      } catch (e) {
+        showToast('❌ 请求失败: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '📋 读取 PC 剪贴板图片并发送到平板';
+      }
+    });
+
+    document.getElementById('btnSnipAndPush').addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/clipboard/snip-and-push', { method: 'POST' });
+        const data = await res.json();
+        if (data.ok) {
+          showToast('✂️ 请框选截图区域，松手后将自动推送到平板！');
+        }
+      } catch (e) {
+        showToast('❌ 无法启动系统截图: ' + e.message);
+      }
+    });
+
+    document.getElementById('btnBlankCanvas').addEventListener('click', () => {
+      const c = document.createElement('canvas');
+      c.width = 1600;
+      c.height = 1000;
+      const ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      pushDataUrlToTablet(c.toDataURL('image/png'), '空白画布 (1600×1000)');
+    });
+
+    document.getElementById('btnOpenTabletPreview').addEventListener('click', () => {
+      window.open('/tablet', '_blank');
+    });
+
+    autoSyncToggle.addEventListener('change', async () => {
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ autoSyncClipboard: autoSyncToggle.checked })
+      });
+      showToast(autoSyncToggle.checked
+        ? '🔄 已开启：PC 剪贴板一旦有新截图/图片将自动推送到平板'
+        : '⏸️ 已关闭自动同步，改为手动确认推送');
+    });
+
+    async function pushDataUrlToTablet(dataUrl, source = 'PC端手动推送') {
+      const img = new Image();
+      img.onload = async () => {
+        await fetch('/api/image/push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dataUrl,
+            width: img.width,
+            height: img.height,
+            source
+          })
+        });
+      };
+      img.src = dataUrl;
+    }
+
+    async function copyDataUrlToSystemClipboard(dataUrl) {
+      if (!dataUrl) return;
+      const res = await fetch('/api/clipboard/copy-dataurl', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('✅ 已写入 Windows 系统剪贴板！可直接 Ctrl+V 粘贴');
+      } else {
+        showToast('❌ 写入剪贴板失败: ' + (data.error || ''));
+      }
+    }
+
+    async function pushProjectToTablet(projectId, stripDrawLayer = false, fallbackDataUrl = '') {
+      if (projectId) {
+        const res = await fetch('/api/project/push-to-tablet', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId, stripDrawLayer })
+        });
+        const data = await res.json();
+        if (data.ok) return;
+      }
+      if (fallbackDataUrl) {
+        await pushDataUrlToTablet(fallbackDataUrl, stripDrawLayer ? 'PC重发纯净底图' : 'PC端再次发回平板');
+      }
+    }
+
+    btnReCopyClipboard.addEventListener('click', () => {
+      copyDataUrlToSystemClipboard(currentPreviewDataUrl);
+    });
+
+    btnResendToTablet.addEventListener('click', () => {
+      if (currentPreviewProjectId || currentPreviewDataUrl) {
+        pushProjectToTablet(currentPreviewProjectId, false, currentPreviewDataUrl);
+      }
+    });
+
+    btnResendCleanBase.addEventListener('click', () => {
+      if (currentPreviewProjectId || currentPreviewDataUrl) {
+        pushProjectToTablet(currentPreviewProjectId, true, currentPreviewDataUrl);
+      }
+    });
+
+    btnClearHistory.addEventListener('click', async () => {
+      try {
+        const res = await fetch('/api/history/clear', { method: 'POST' });
+        const data = await res.json();
+        if (!data.ok) {
+          showToast('❌ 清空记录失败: ' + (data.error || ''));
+        }
+      } catch (e) {
+        showToast('❌ 请求失败: ' + e.message);
+      }
+    });
+
+    // 复制链接与复制提示词
+    document.getElementById('btnCopyUrl').addEventListener('click', () => {
+      navigator.clipboard.writeText(currentTabletUrl);
+      showToast('🔗 已复制平板端局域网链接');
+    });
+
+    document.getElementById('btnCopyPrompt').addEventListener('click', () => {
+      if (!promptInput.value.trim()) {
+        showToast('💡 提示词为空，请先输入或点击下方标签');
+        return;
+      }
+      navigator.clipboard.writeText(promptInput.value);
+      showToast('📄 已复制提示词文本！（注意：复制文本会覆盖剪贴板中的图片，建议先在 AI 聊天框粘贴图片后再复制文本）');
+    });
+
+    document.querySelectorAll('.prompt-chip').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const tpl = chip.getAttribute('data-tpl');
+        promptInput.value = promptInput.value ? (promptInput.value + '\n' + tpl) : tpl;
+        promptInput.focus();
+      });
+    });
+
+    // 拖拽、文件选择与网页内直接 Ctrl+V
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        readFileAndPush(e.dataTransfer.files[0]);
+      }
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files && fileInput.files[0]) {
+        readFileAndPush(fileInput.files[0]);
+        fileInput.value = '';
+      }
+    });
+
+    function readFileAndPush(file) {
+      if (!file.type.startsWith('image/')) {
+        showToast('⚠️ 请选择图片文件');
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => pushDataUrlToTablet(ev.target.result, `本地文件 (${file.name})`);
+      reader.readAsDataURL(file);
+    }
+
+    window.addEventListener('paste', (e) => {
+      if (document.activeElement === promptInput) return;
+      const items = (e.clipboardData || window.clipboardData).items;
+      for (const item of items) {
+        if (item.type.indexOf('image') !== -1) {
+          const file = item.getAsFile();
+          readFileAndPush(file);
+          return;
+        }
+      }
+    });
+
+    loadServerInfo();
+    connectWebSocket();
+  </script>
+</body>
+</html>
