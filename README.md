@@ -1,7 +1,7 @@
 # 🎨 AI 创作平板助手 (AI Creative Tablet Assistant)
 
 一个专为 **多模态 AI Agent 协同对话** 打造的跨端视觉标注与手绘工具。  
-通过 **Windows 剪贴板 ⇄ 局域网 WebSocket ⇄ 安卓平板全屏 PWA 画布**，把你的安卓平板变成 PC 的无线手绘交互屏：
+通过 **Windows 剪贴板 ⇄ 局域网 WebSocket ⇄ 平板全屏 PWA 画布**，把你的 iPad / 安卓平板变成 PC 的无线手绘交互屏：
 
 > **PC 截图 (`Win+Shift+S`) / 复制图片 ➔ 平板手写笔圈注、填色、连续折线、①②③ 编号 ➔ 自动写回 PC 系统剪贴板 ➔ 在 AI 聊天框直接 `Ctrl + V` 粘贴发送！**
 
@@ -9,7 +9,7 @@
 
 ## ✨ 核心特性
 
-- **零安装门槛**：安卓平板无需安装 APK，使用 Chrome / Edge 扫码即用，支持「添加到主屏幕」以全屏 PWA 模式运行。
+- **零安装门槛**：兼容 iPad（iPadOS Safari + Apple Pencil）与安卓平板（Chrome / Edge + 手写笔），无需安装 App / APK，扫码即用并支持「添加到主屏幕」以全屏 PWA 模式运行。
 - **双向剪贴板无缝接力**：
   - **PC ➔ 平板**：支持一键读取 Windows 剪贴板图片、一键唤起 `Win+Shift+S` 区域截图直达平板、拖拽/`Ctrl+V` 传图，以及可选的「自动同步 PC 剪贴板新图片」。
   - **平板 ➔ PC**：支持「落笔自动同步」（停笔 0.45s 自动覆盖更新当前工程并写入 PC 剪贴板）与右下角悬浮按钮手动同步。
@@ -35,7 +35,7 @@
 
 ### 环境要求
 - **PC 端**：Windows 10 / 11（内置 PowerShell）+ [Node.js](https://nodejs.org/)（推荐 v18+）
-- **平板端**：安卓平板（与 PC 处于同一局域网 / Wi-Fi 下），内置 Chrome / Edge 等现代浏览器
+- **平板端**：iPad（iPadOS）或安卓平板（与 PC 处于同一局域网 / Wi-Fi 下），使用 Safari / Chrome / Edge 等现代浏览器
 
 ### 安装与启动
 
@@ -53,7 +53,7 @@ npm start
 
 启动后：
 1. 在 PC 浏览器访问 `http://localhost:3680/pc` 打开 **PC 协同控制台**；
-2. 用安卓平板浏览器扫描控制台左侧二维码（或访问控制台显示的局域网地址 `http://<你的局域网IP>:3680/tablet`）；
+2. 用平板浏览器（Safari / Chrome / Edge）扫描控制台左侧二维码（或访问控制台显示的局域网地址 `http://<你的局域网IP>:3680/tablet`）；
 3. 开始截图、手绘标注，完成后直接切换到你的 AI Agent 聊天框按 `Ctrl + V` 粘贴图片即可。
 
 ---
@@ -67,7 +67,7 @@ npm start
 ├── package.json              # 项目依赖配置 (ws, qrcode)
 └── public/
     ├── pc.html               # PC 端协同控制台
-    ├── tablet.html           # 安卓平板端全屏画布 PWA
+    ├── tablet.html           # 平板端全屏画布 PWA（兼容 iPad / 安卓平板）
     └── manifest.json         # PWA 清单配置
 ```
 
