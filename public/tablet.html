@@ -115,6 +115,46 @@
       box-shadow: 0 0 8px var(--emerald);
     }
 
+    .pairing-notice {
+      position: fixed;
+      inset: 0;
+      z-index: 250;
+      display: grid;
+      place-content: center;
+      padding: 24px;
+      text-align: center;
+      background: var(--bg-dark);
+    }
+
+    .pairing-notice[hidden] {
+      display: none;
+    }
+
+    .pairing-notice p {
+      margin-top: 10px;
+      color: var(--muted);
+    }
+
+    .pairing-form {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .pairing-form input {
+      width: min(320px, 100%);
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel-bg);
+      color: var(--text);
+      font-size: 16px;
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
     .icon-btn {
       height: 38px;
       padding: 0 12px;
@@ -693,7 +733,7 @@
   <div class="text-modal" id="textModal">
     <div class="text-dialog">
       <h3>🔤 添加 AI 视觉文字批注</h3>
-      <input type="text" id="textAnnotationInput" placeholder="输入批注说明（如：改成圆角按钮）..." />
+      <input type="text" id="textAnnotationInput" maxlength="4096" placeholder="输入批注说明（如：改成圆角按钮）..." />
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);margin-bottom:14px;">
         <input type="checkbox" id="textBgCheckbox" checked />
         <span>添加高对比度底色标签（方便 AI 准确识别文字）</span>
@@ -705,6 +745,15 @@
     </div>
   </div>
 
+  <div class="pairing-notice" id="pairingNotice">
+    <h2>连接到 PC</h2>
+    <p id="pairingMessage" role="status">正在检查配对状态…</p>
+    <form class="pairing-form" id="pairingForm">
+      <input id="pairingInput" aria-label="配对链接" placeholder="粘贴 PC 控制台的配对链接" maxlength="256"
+             autocomplete="off" autocapitalize="off" spellcheck="false" required />
+      <button class="icon-btn" type="submit">配对</button>
+    </form>
+  </div>
   <div class="toast" id="toast"></div>
 
   <script>
@@ -2091,11 +2140,14 @@
         row.className = 'stroke-item';
         row.innerHTML = `
           <div class="stroke-item-info">
-            <span class="stroke-color-dot" style="background:${rec.color || '#ef4444'}"></span>
-            <span>#${idx + 1} ${rec.label || rec.tool}</span>
+            <span class="stroke-color-dot"></span>
+            <span class="stroke-item-name"></span>
           </div>
           <button class="stroke-del-btn">🗑️ 移除</button>
         `;
+        row.querySelector('.stroke-color-dot').style.backgroundColor =
+          /^#[0-9a-f]{6}$/i.test(rec.color) ? rec.color : '#ef4444';
+        row.querySelector('.stroke-item-name').textContent = `#${idx + 1} ${rec.label || rec.tool}`;
         row.querySelector('.stroke-del-btn').addEventListener('click', () => {
           removeStrokeRecordById(rec.id);
         });
@@ -2107,16 +2159,100 @@
     // 5. WebSocket 连接与一键发送回 PC 剪贴板
     // ==========================================
     let ws = null;
+    let paired = false;
     const connDot = document.getElementById('connDot');
     const connText = document.getElementById('connText');
+    const pairingNotice = document.getElementById('pairingNotice');
+    const pairingMessage = document.getElementById('pairingMessage');
+    const pairingInput = document.getElementById('pairingInput');
+    let pairingCode = readPairingFragment();
+    let connectInProgress = false;
+    let reconnectTimer;
+
+    function readPairingFragment() {
+      const code = new URLSearchParams(location.hash.slice(1)).get('pair');
+      if (code !== null) history.replaceState(null, '', location.pathname + location.search);
+      return code;
+    }
+
+    window.addEventListener('hashchange', () => {
+      const code = readPairingFragment();
+      if (code === null || paired) return;
+      pairingCode = code;
+      connectTablet();
+    });
+
+    document.getElementById('pairingForm').addEventListener('submit', event => {
+      event.preventDefault();
+      if (connectInProgress || (ws && ws.readyState < WebSocket.CLOSING)) return;
+      const value = pairingInput.value.trim();
+      let code = value;
+      if (!/^[a-f0-9]{32}$/.test(value)) {
+        try {
+          const link = new URL(value);
+          if (link.origin === location.origin) code = new URLSearchParams(link.hash.slice(1)).get('pair');
+        } catch {}
+      }
+      if (!/^[a-f0-9]{32}$/.test(code || '')) {
+        showPairingNotice('请粘贴当前局域网地址对应的有效配对链接。');
+        return;
+      }
+      pairingInput.value = '';
+      pairingCode = code;
+      connectTablet();
+    });
+
+    function showPairingNotice(message = '请在 PC 控制台扫描新的配对二维码，或在平板打开配对链接。') {
+      paired = false;
+      clearTimeout(autoSyncTimer);
+      connDot.className = 'dot';
+      connText.textContent = '等待配对';
+      pairingMessage.textContent = message;
+      pairingNotice.hidden = false;
+    }
+
+    async function connectTablet() {
+      if (connectInProgress) return;
+      clearTimeout(reconnectTimer);
+      connectInProgress = true;
+      try {
+        const status = await (await fetch('/api/pair')).json();
+        if (!status.ok) throw new Error(status.error);
+        if (!status.paired) {
+          if (pairingCode === null) {
+            showPairingNotice();
+            return;
+          }
+          const result = await (await fetch('/api/pair', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: pairingCode })
+          })).json();
+          pairingCode = null;
+          if (!result.ok) {
+            showPairingNotice(result.error);
+            return;
+          }
+        }
+        pairingCode = null;
+        paired = true;
+        connectWS();
+      } catch (error) {
+        showPairingNotice('暂时无法连接 PC，正在重试…');
+        reconnectTimer = setTimeout(connectTablet, 2000);
+      } finally {
+        connectInProgress = false;
+      }
+    }
 
     function connectWS() {
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${location.host}/?role=tablet&device=Android-Tablet`);
+      ws = new WebSocket(`${proto}//${location.host}/?role=tablet`);
 
       ws.onopen = () => {
         connDot.className = 'dot online';
         connText.textContent = '已连接 PC';
+        pairingNotice.hidden = true;
       };
 
       ws.onmessage = (ev) => {
@@ -2131,23 +2267,33 @@
               loadProjectFromPC(msg.item);
             }
           } else if (msg.type === 'RETURN_ACK') {
-            if (msg.itemId) {
-              currentProjectId = msg.itemId;
-            }
-            if (msg.auto) {
-              connText.textContent = '已分层保存并更新剪贴板';
-            } else {
-              showToast('✅ 已分层保存工程，并将叠加版写入 PC 剪贴板！可直接 Ctrl+V 粘贴');
-            }
+            handleReturnResult(msg, msg.auto);
           }
         } catch (_) {}
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        if (event.code === 4001) {
+          showPairingNotice('配对已失效，请在 PC 控制台重新扫码。');
+          return;
+        }
         connDot.className = 'dot';
         connText.textContent = '断开重连中...';
-        setTimeout(connectWS, 2000);
+        reconnectTimer = setTimeout(connectTablet, 2000);
       };
+    }
+
+    function handleReturnResult(result, isAuto) {
+      if (!result.ok) {
+        connText.textContent = '同步失败';
+        if (!isAuto) showToast(result.error || '画布发送失败');
+        return;
+      }
+      const projectId = result.itemId || result.item?.projectId;
+      if (!currentProjectId && projectId) currentProjectId = projectId;
+      const message = result.clipboardWritten ? '已保存并更新 PC 剪贴板' : '已保存工程，PC 剪贴板写入失败';
+      connText.textContent = message;
+      if (!isAuto) showToast(message);
     }
 
     function buildPromptHintFromAnnotations() {
@@ -2169,6 +2315,7 @@
     }
 
     async function sendCanvasToPC(isAuto = false) {
+      if (!paired) return;
       const btn = document.getElementById('btnSendToPC');
       const fab = document.getElementById('btnFabSendToPC');
       if (!isAuto) {
@@ -2220,16 +2367,8 @@
             body: JSON.stringify(payload)
           });
           const data = await res.json();
-          if (data.ok) {
-            if (data.item && data.item.projectId) {
-              currentProjectId = data.item.projectId;
-            }
-            if (!isAuto) {
-              showToast('✅ 已分层保存并将叠加版写入 PC 剪贴板！可直接 Ctrl+V 粘贴');
-            }
-          } else if (!data.ok && !isAuto) {
-            showToast('❌ 发送失败: ' + (data.error || ''));
-          }
+          if (res.status === 401) showPairingNotice();
+          handleReturnResult(data, isAuto);
         }
       } catch (err) {
         if (!isAuto) showToast('❌ 发送异常: ' + err.message);
@@ -2248,7 +2387,7 @@
 
     // 初始化默认空白画布并连接服务
     initCanvasSize(1600, 1000, true);
-    connectWS();
+    connectTablet();
     window.addEventListener('resize', fitCanvasToViewport);
   </script>
 </body>

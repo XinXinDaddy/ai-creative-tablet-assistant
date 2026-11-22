@@ -570,19 +570,20 @@
 
       <section class="card">
         <div class="card-title">
-          <span>📱 安卓平板扫码连接 (同一局域网/Wi-Fi)</span>
+          <span>📱 平板配对（同一局域网/Wi-Fi）</span>
         </div>
 
         <div class="qr-box">
           <select id="ipSelect" class="ip-select" title="如果有多张网卡，可切换局域网 IP"></select>
-          <img id="qrImage" src="" alt="扫码打开平板画布" />
+          <img id="qrImage" alt="平板一次性配对二维码" />
           <div class="url-bar">
             <span id="tabletUrlText" style="flex:1;">http://...</span>
-            <button class="btn btn-outline" id="btnCopyUrl" style="padding:4px 8px;font-size:11px;">复制链接</button>
+            <button class="btn btn-outline" id="btnCopyUrl" style="padding:4px 8px;font-size:11px;">复制配对链接</button>
           </div>
           <p style="font-size:12px;color:var(--text-muted);margin-top:10px;text-align:center;">
-            💡 平板用 Chrome / Edge 浏览器扫码打开后，点击浏览器菜单「添加到主屏幕」即可获得全屏原生 App 体验
+            配对链接一次有效，5 分钟过期。扫码或在平板打开链接即可配对。
           </p>
+          <button class="btn btn-outline" id="btnRevokePairing" style="padding:4px 8px;font-size:11px;">解除全部平板配对</button>
         </div>
       </section>
     </div>
@@ -599,7 +600,7 @@
             <button class="btn btn-outline" id="btnResendToTablet" style="padding:7px 12px;font-size:12px;" disabled title="保留分层笔画，发回平板后可继续绘制或移除旧笔画">
               🔄 再次发回平板编辑
             </button>
-            <button class="btn btn-outline" id="btnResendCleanBase" style="padding:7px 12px;font-size:12px;" disabled title="剥离之前添加的所有笔画与标记，仅发送纯净原图到平板">
+            <button class="btn btn-outline" id="btnResendCleanBase" style="padding:7px 12px;font-size:12px;" disabled title="将底图作为新工程发送到平板">
               🧹 仅发纯净底图到平板
             </button>
             <a class="btn btn-outline" id="btnDownloadImg" style="padding:7px 12px;font-size:12px;display:none;" download="ai_annotated.png">
@@ -685,7 +686,10 @@
 
     let currentPreviewDataUrl = '';
     let currentPreviewProjectId = '';
-    let currentTabletUrl = '';
+    let pairingUrl = '';
+    let pairingPath = '';
+    let pairingRefreshTimer;
+    let infoRequest = 0;
     let historyList = [];
 
     function showToast(msg) {
@@ -715,10 +719,22 @@
     }
 
     async function loadServerInfo(selectedIp = '') {
+      const request = ++infoRequest;
+      clearTimeout(pairingRefreshTimer);
       const url = selectedIp ? `/api/info?ip=${encodeURIComponent(selectedIp)}` : '/api/info';
-      const res = await fetch(url);
-      const data = await res.json();
-      if (!data.ok) return;
+      let data;
+      try {
+        data = await (await fetch(url)).json();
+        if (!data.ok) throw new Error(data.error);
+      } catch (error) {
+        if (request !== infoRequest) return;
+        pairingUrl = pairingPath = '';
+        qrImage.removeAttribute('src');
+        tabletUrlText.textContent = '暂时无法获取配对链接';
+        pairingRefreshTimer = setTimeout(() => loadServerInfo(), 2000);
+        return;
+      }
+      if (request !== infoRequest) return;
 
       // 填充网卡列表
       ipSelect.innerHTML = '';
@@ -731,18 +747,25 @@
       });
 
       qrImage.src = data.qrDataUrl;
-      currentTabletUrl = data.tabletUrl;
+      pairingUrl = data.pairingUrl;
+      pairingPath = data.pairingPath;
       tabletUrlText.textContent = data.tabletUrl;
       autoSyncToggle.checked = Boolean(data.autoSyncClipboard);
-
       updateClientsUI(data.clients);
+      pairingRefreshTimer = setTimeout(() => loadServerInfo(ipSelect.value),
+        Math.max(200, data.pairingExpiresAt - Date.now() + 100));
+    }
 
+    function renderInitialState(data) {
+      autoSyncToggle.checked = Boolean(data.autoSyncClipboard);
+      updateClientsUI(data.clients);
       if (data.latestReturnedImage) {
         renderPreview(data.latestReturnedImage, true);
       } else if (data.currentImage) {
         renderPreview(data.currentImage, false);
+      } else {
+        resetPreviewUI();
       }
-
       if (Array.isArray(data.history)) {
         historyList = data.history;
         renderHistory();
@@ -759,10 +782,10 @@
       if (count > 0) {
         tabletDot.className = 'dot online';
         const names = clients.tablets.map(t => `${t.deviceName} (${t.ip})`).join(', ');
-        tabletCountText.textContent = `已连接安卓平板: ${count} 台 [${names}]`;
+        tabletCountText.textContent = `已连接平板: ${count} 台 [${names}]`;
       } else {
         tabletDot.className = 'dot waiting';
-        tabletCountText.textContent = '等待安卓平板扫码连接 (0 台)';
+        tabletCountText.textContent = '等待平板扫码配对 (0 台)';
       }
     }
 
@@ -831,25 +854,32 @@
         const pid = item.projectId || item.id;
         div.innerHTML = `
           <div class="history-thumb">
-            <img src="${item.dataUrl}" alt="history" />
+            <img alt="工程预览" />
           </div>
           <div class="history-meta">
             <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
-              <span class="badge-dir ${isToPc ? 'to-pc' : 'to-tablet'}">${isToPc ? '平板➔PC' : 'PC➔平板'}</span>
-              <span>${hasLayers ? '📐分层' : ''} ${item.timestamp || ''}</span>
+              <span class="badge-dir"></span>
+              <span class="history-time"></span>
             </div>
             <div style="display:flex;gap:4px;">
               <button class="btn btn-outline btn-copy-hist" style="flex:1;padding:4px;font-size:11px;">写剪贴板</button>
               <button class="btn btn-outline btn-send-hist" style="flex:1;padding:4px;font-size:11px;" title="保留分层发回平板继续编辑或移除旧笔画">继续编辑</button>
             </div>
-            ${hasLayers ? '<button class="btn btn-outline btn-strip-hist" style="width:100%;padding:3px;font-size:10px;color:#fcd34d;">🧹 仅发纯净底图到平板</button>' : ''}
+            <button class="btn btn-outline btn-strip-hist" style="width:100%;padding:3px;font-size:10px;color:#fcd34d;">🧹 仅发纯净底图到平板</button>
           </div>
         `;
+        div.querySelector('img').src = item.dataUrl;
+        const direction = div.querySelector('.badge-dir');
+        direction.classList.add(isToPc ? 'to-pc' : 'to-tablet');
+        direction.textContent = isToPc ? '平板➔PC' : 'PC➔平板';
+        div.querySelector('.history-time').textContent = `${hasLayers ? '📐分层 ' : ''}${item.timestamp || ''}`;
         div.querySelector('.btn-copy-hist').addEventListener('click', () => copyDataUrlToSystemClipboard(item.dataUrl));
-        div.querySelector('.btn-send-hist').addEventListener('click', () => pushProjectToTablet(pid, false, item.dataUrl));
+        div.querySelector('.btn-send-hist').addEventListener('click', () => pushProjectToTablet(pid, false));
         const stripBtn = div.querySelector('.btn-strip-hist');
-        if (stripBtn) {
-          stripBtn.addEventListener('click', () => pushProjectToTablet(pid, true, item.baseDataUrl || item.dataUrl));
+        if (hasLayers) {
+          stripBtn.addEventListener('click', () => pushProjectToTablet(pid, true));
+        } else {
+          stripBtn.remove();
         }
         historyContainer.appendChild(div);
       });
@@ -868,7 +898,12 @@
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.type === 'CLIENTS_STATUS') {
+          if (msg.type === 'INIT_STATE') {
+            renderInitialState(msg);
+            loadServerInfo(ipSelect.value);
+          } else if (msg.type === 'PAIRING_UPDATED') {
+            loadServerInfo(ipSelect.value);
+          } else if (msg.type === 'CLIENTS_STATUS') {
             updateClientsUI(msg.clients);
           } else if (msg.type === 'SETTINGS_UPDATED') {
             autoSyncToggle.checked = Boolean(msg.autoSyncClipboard);
@@ -941,7 +976,19 @@
     });
 
     document.getElementById('btnOpenTabletPreview').addEventListener('click', () => {
-      window.open('/tablet', '_blank');
+      if (pairingPath) window.open(pairingPath, '_blank', 'noopener');
+    });
+
+    document.getElementById('btnRevokePairing').addEventListener('click', async () => {
+      if (!window.confirm('解除全部平板配对？各设备需要重新扫码连接。')) return;
+      try {
+        const data = await (await fetch('/api/pairing/revoke', { method: 'POST' })).json();
+        if (!data.ok) throw new Error(data.error);
+        await loadServerInfo(ipSelect.value);
+        showToast('已解除全部平板配对');
+      } catch (error) {
+        showToast('解除配对失败：' + error.message);
+      }
     });
 
     autoSyncToggle.addEventListener('change', async () => {
@@ -955,50 +1002,70 @@
         : '⏸️ 已关闭自动同步，改为手动确认推送');
     });
 
+    async function preparePng(dataUrl) {
+      const img = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve(image);
+        image.onerror = () => reject(new Error('无法读取图片'));
+        image.src = dataUrl;
+      });
+      const width = img.naturalWidth;
+      const height = img.naturalHeight;
+      if (!width || !height || width > 8192 || height > 8192 || width * height > 32 * 1024 * 1024) {
+        throw new Error('图片最长边需在 8192 像素以内，总像素数最多 33554432');
+      }
+      if (dataUrl.startsWith('data:image/png;base64,')) return { dataUrl, width, height };
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      return { dataUrl: canvas.toDataURL('image/png'), width, height };
+    }
+
     async function pushDataUrlToTablet(dataUrl, source = 'PC端手动推送') {
-      const img = new Image();
-      img.onload = async () => {
-        await fetch('/api/image/push', {
+      try {
+        const image = await preparePng(dataUrl);
+        const response = await fetch('/api/image/push', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            dataUrl,
-            width: img.width,
-            height: img.height,
-            source
-          })
+          body: JSON.stringify({ ...image, source: source.slice(0, 256) })
         });
-      };
-      img.src = dataUrl;
+        const result = await response.json();
+        if (!result.ok) throw new Error(result.error);
+      } catch (error) {
+        showToast('图片发送失败：' + error.message);
+      }
     }
 
     async function copyDataUrlToSystemClipboard(dataUrl) {
       if (!dataUrl) return;
-      const res = await fetch('/api/clipboard/copy-dataurl', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dataUrl })
-      });
-      const data = await res.json();
-      if (data.ok) {
+      try {
+        const image = await preparePng(dataUrl);
+        const res = await fetch('/api/clipboard/copy-dataurl', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(image)
+        });
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error);
         showToast('✅ 已写入 Windows 系统剪贴板！可直接 Ctrl+V 粘贴');
-      } else {
-        showToast('❌ 写入剪贴板失败: ' + (data.error || ''));
+      } catch (error) {
+        showToast('❌ 写入剪贴板失败：' + error.message);
       }
     }
 
-    async function pushProjectToTablet(projectId, stripDrawLayer = false, fallbackDataUrl = '') {
-      if (projectId) {
+    async function pushProjectToTablet(projectId, stripDrawLayer = false) {
+      if (!projectId) return;
+      try {
         const res = await fetch('/api/project/push-to-tablet', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId, stripDrawLayer })
         });
         const data = await res.json();
-        if (data.ok) return;
-      }
-      if (fallbackDataUrl) {
-        await pushDataUrlToTablet(fallbackDataUrl, stripDrawLayer ? 'PC重发纯净底图' : 'PC端再次发回平板');
+        if (!data.ok) throw new Error(data.error);
+      } catch (error) {
+        showToast('工程重发失败：' + error.message);
       }
     }
 
@@ -1007,15 +1074,11 @@
     });
 
     btnResendToTablet.addEventListener('click', () => {
-      if (currentPreviewProjectId || currentPreviewDataUrl) {
-        pushProjectToTablet(currentPreviewProjectId, false, currentPreviewDataUrl);
-      }
+      pushProjectToTablet(currentPreviewProjectId, false);
     });
 
     btnResendCleanBase.addEventListener('click', () => {
-      if (currentPreviewProjectId || currentPreviewDataUrl) {
-        pushProjectToTablet(currentPreviewProjectId, true, currentPreviewDataUrl);
-      }
+      pushProjectToTablet(currentPreviewProjectId, true);
     });
 
     btnClearHistory.addEventListener('click', async () => {
@@ -1031,9 +1094,14 @@
     });
 
     // 复制链接与复制提示词
-    document.getElementById('btnCopyUrl').addEventListener('click', () => {
-      navigator.clipboard.writeText(currentTabletUrl);
-      showToast('🔗 已复制平板端局域网链接');
+    document.getElementById('btnCopyUrl').addEventListener('click', async () => {
+      if (!pairingUrl) return;
+      try {
+        await navigator.clipboard.writeText(pairingUrl);
+        showToast('🔗 已复制一次性配对链接');
+      } catch (error) {
+        showToast('复制配对链接失败，请扫描二维码');
+      }
     });
 
     document.getElementById('btnCopyPrompt').addEventListener('click', () => {
@@ -1079,13 +1147,16 @@
     });
 
     function readFileAndPush(file) {
-      if (!file.type.startsWith('image/')) {
+      if (!file || !file.type.startsWith('image/')) {
         showToast('⚠️ 请选择图片文件');
         return;
       }
-      const reader = new FileReader();
-      reader.onload = (ev) => pushDataUrlToTablet(ev.target.result, `本地文件 (${file.name})`);
-      reader.readAsDataURL(file);
+      if (file.size > 32 * 1024 * 1024) {
+        showToast('图片文件最多 32 MiB');
+        return;
+      }
+      const url = URL.createObjectURL(file);
+      pushDataUrlToTablet(url, `本地文件 (${file.name})`).finally(() => URL.revokeObjectURL(url));
     }
 
     window.addEventListener('paste', (e) => {

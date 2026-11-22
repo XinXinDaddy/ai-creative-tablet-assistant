@@ -6,16 +6,22 @@ const crypto = require('crypto');
 const { spawn } = require('child_process');
 const { WebSocketServer } = require('ws');
 const QRCode = require('qrcode');
+const { createAccessControl, getRequestOrigin, isPcRequest, isSameOrigin } = require('./access');
+const {
+  MAX_JSON_BYTES, HttpError, requireInput, requireProjectId, parseJson, readJsonBody, readPng,
+  decodeStoredImage, encodeStoredImage, validateImagePayload
+} = require('./input');
 
-const PORT = process.env.PORT || 3680;
+const PORT = Number(process.env.PORT ?? 3680);
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const HISTORY_DIR = path.join(__dirname, 'history');
 const PROJECTS_DIR = path.join(HISTORY_DIR, 'projects');
 const INDEX_FILE = path.join(HISTORY_DIR, 'index.json');
+const LATEST_RETURN_FILE = path.join(HISTORY_DIR, 'latest-returned.png');
 
-if (!fs.existsSync(PROJECTS_DIR)) {
-  fs.mkdirSync(PROJECTS_DIR, { recursive: true });
-}
+const access = createAccessControl();
+checkDirectory(HISTORY_DIR, true);
+checkDirectory(PROJECTS_DIR, true);
 
 // ==========================================
 // 1. 局域网 IP 探测与排序
@@ -189,29 +195,42 @@ const state = {
   suppressClipboardPollUntil: 0,
   currentImage: null,
   latestReturnedImage: null,
+  latestTabletImage: null,
   history: [], // 最近 20 个分层工程记录
   awaitingSnip: false
 };
 
-function dataUrlToBuffer(dataUrl) {
-  const matches = dataUrl.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
-  if (!matches) {
-    throw new Error('无效的图片 DataURL 格式');
+function checkDirectory(dir, create = false) {
+  let stats = fs.lstatSync(dir, { throwIfNoEntry: false });
+  if (!stats && create) {
+    fs.mkdirSync(dir);
+    stats = fs.lstatSync(dir);
   }
-  return Buffer.from(matches[2], 'base64');
+  if (stats && !stats.isDirectory()) throw new Error('工程目录无效');
+  return Boolean(stats);
 }
 
-function bufferToPngDataUrl(buf) {
-  return 'data:image/png;base64,' + buf.toString('base64');
+function isRegularFile(filePath) {
+  const stats = fs.lstatSync(filePath, { throwIfNoEntry: false });
+  if (stats && (!stats.isFile() || stats.nlink !== 1)) throw new Error('工程文件类型无效');
+  return Boolean(stats);
 }
 
-function saveDataUrlToFile(dataUrl, prefix = 'img') {
-  const buffer = dataUrlToBuffer(dataUrl);
-  const hash = crypto.createHash('sha256').update(buffer).digest('hex');
-  const fileName = `${prefix}_${Date.now()}_${hash.slice(0, 8)}.png`;
-  const filePath = path.join(HISTORY_DIR, fileName);
-  fs.writeFileSync(filePath, buffer);
-  return { filePath, fileName, hash, size: buffer.length };
+function getProjectPaths(projectId, create = false) {
+  requireProjectId(projectId);
+  if (!checkDirectory(HISTORY_DIR, create) || !checkDirectory(PROJECTS_DIR, create)) return null;
+  const projDir = path.resolve(PROJECTS_DIR, projectId);
+  if (path.dirname(projDir) !== PROJECTS_DIR || !checkDirectory(projDir, create)) return null;
+  return {
+    basePath: path.join(projDir, 'base.png'),
+    drawPath: path.join(projDir, 'draw.png'),
+    mergedPath: path.join(projDir, 'merged.png'),
+    metaPath: path.join(projDir, 'meta.json')
+  };
+}
+
+function createProjectId() {
+  return 'proj_' + Date.now() + '_' + crypto.randomBytes(8).toString('hex');
 }
 
 function persistHistoryIndex() {
@@ -223,6 +242,8 @@ function persistHistoryIndex() {
       source: item.source,
       timestamp: item.timestamp
     }));
+    checkDirectory(HISTORY_DIR);
+    isRegularFile(INDEX_FILE);
     fs.writeFileSync(INDEX_FILE, JSON.stringify(indexData, null, 2), 'utf8');
   } catch (e) {
     console.error('[PersistIndex Error]:', e.message);
@@ -230,41 +251,27 @@ function persistHistoryIndex() {
 }
 
 function saveLayeredProjectToDisk(item) {
-  const projectId = item.projectId || item.id;
-  item.projectId = projectId;
-  const projDir = path.join(PROJECTS_DIR, projectId);
-  if (!fs.existsSync(projDir)) {
-    fs.mkdirSync(projDir, { recursive: true });
-  }
-
-  const basePath = path.join(projDir, 'base.png');
-  const drawPath = path.join(projDir, 'draw.png');
-  const mergedPath = path.join(projDir, 'merged.png');
-  const metaPath = path.join(projDir, 'meta.json');
+  const { projectId } = item;
+  const base = decodeStoredImage(item.baseDataUrl);
+  const draw = item.drawDataUrl ? decodeStoredImage(item.drawDataUrl) : null;
+  const merged = item.dataUrl === item.baseDataUrl ? base : decodeStoredImage(item.dataUrl);
+  const { basePath, drawPath, mergedPath, metaPath } = getProjectPaths(projectId, true);
+  [basePath, mergedPath, metaPath].forEach(isRegularFile);
+  const hasOldDraw = isRegularFile(drawPath);
 
   // 1. 保存纯净底图 base.png
-  if (item.baseDataUrl) {
-    fs.writeFileSync(basePath, dataUrlToBuffer(item.baseDataUrl));
-  } else if (!fs.existsSync(basePath) && item.dataUrl) {
-    fs.writeFileSync(basePath, dataUrlToBuffer(item.dataUrl));
-    item.baseDataUrl = item.dataUrl;
-  } else if (fs.existsSync(basePath) && !item.baseDataUrl) {
-    item.baseDataUrl = bufferToPngDataUrl(fs.readFileSync(basePath));
-  }
+  fs.writeFileSync(basePath, base);
 
   // 2. 保存额外绘制透明图层 draw.png
-  if (item.drawDataUrl) {
-    fs.writeFileSync(drawPath, dataUrlToBuffer(item.drawDataUrl));
-  } else if (item.drawDataUrl === null && fs.existsSync(drawPath)) {
+  if (draw) {
+    fs.writeFileSync(drawPath, draw);
+  } else if (hasOldDraw) {
     fs.unlinkSync(drawPath);
   }
 
   // 3. 保存叠加合成图 merged.png (用于剪贴板与总览)
-  const mergedDataUrl = item.dataUrl || item.baseDataUrl;
-  const mergedBuf = dataUrlToBuffer(mergedDataUrl);
-  const mergedHash = crypto.createHash('sha256').update(mergedBuf).digest('hex');
-  fs.writeFileSync(mergedPath, mergedBuf);
-  item.dataUrl = mergedDataUrl;
+  const mergedHash = crypto.createHash('sha256').update(merged).digest('hex');
+  fs.writeFileSync(mergedPath, merged);
 
   // 4. 保存元数据与独立笔画记录 meta.json
   const meta = {
@@ -291,30 +298,30 @@ function saveLayeredProjectToDisk(item) {
   item.files = meta.files;
   item.hasDrawLayer = meta.hasDrawLayer;
 
-  return { projDir, basePath, drawPath, mergedPath, metaPath, mergedHash };
+  return { mergedPath, mergedHash, merged };
 }
 
 function loadProjectFromDisk(projectId) {
-  const projDir = path.join(PROJECTS_DIR, projectId);
-  const metaPath = path.join(projDir, 'meta.json');
-  const basePath = path.join(projDir, 'base.png');
-  const drawPath = path.join(projDir, 'draw.png');
-  const mergedPath = path.join(projDir, 'merged.png');
-
-  if (!fs.existsSync(metaPath) || !fs.existsSync(mergedPath)) return null;
   try {
+    const files = getProjectPaths(projectId);
+    if (!files) return null;
+    const { basePath, drawPath, mergedPath, metaPath } = files;
+    if (!isRegularFile(metaPath) || !isRegularFile(mergedPath)) return null;
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-    const mergedDataUrl = bufferToPngDataUrl(fs.readFileSync(mergedPath));
-    const baseDataUrl = fs.existsSync(basePath)
-      ? bufferToPngDataUrl(fs.readFileSync(basePath))
+    const mergedDataUrl = encodeStoredImage(fs.readFileSync(mergedPath));
+    const hasBaseFile = isRegularFile(basePath);
+    const baseDataUrl = hasBaseFile
+      ? encodeStoredImage(fs.readFileSync(basePath))
       : mergedDataUrl;
-    const drawDataUrl = fs.existsSync(drawPath)
-      ? bufferToPngDataUrl(fs.readFileSync(drawPath))
+    const drawDataUrl = isRegularFile(drawPath)
+      ? encodeStoredImage(fs.readFileSync(drawPath))
       : null;
 
     return {
       ...meta,
+      id: projectId,
       projectId,
+      hasBaseFile,
       dataUrl: mergedDataUrl,
       baseDataUrl,
       drawDataUrl,
@@ -326,12 +333,12 @@ function loadProjectFromDisk(projectId) {
 }
 
 function loadHistoryFromDiskOnStartup() {
-  if (!fs.existsSync(INDEX_FILE)) return;
   try {
+    if (!isRegularFile(INDEX_FILE)) return;
     const list = JSON.parse(fs.readFileSync(INDEX_FILE, 'utf8'));
     if (!Array.isArray(list)) return;
     for (const entry of list) {
-      const pid = entry.projectId || entry.id;
+      const pid = entry?.projectId || entry?.id;
       if (!pid) continue;
       const proj = loadProjectFromDisk(pid);
       if (proj) {
@@ -357,7 +364,48 @@ function upsertProjectHistory(item) {
   persistHistoryIndex();
 }
 
+function createTabletImageSnapshot(data, contentType, hash = crypto.createHash('sha256').update(data).digest('hex')) {
+  return { data, contentType, etag: '"' + hash + '"' };
+}
+
+function loadLatestTabletImage() {
+  try {
+    if (isRegularFile(LATEST_RETURN_FILE)) {
+      return createTabletImageSnapshot(fs.readFileSync(LATEST_RETURN_FILE), 'image/png');
+    }
+  } catch (error) {
+    console.error('[LatestTabletImage Load Error]:', error.message);
+  }
+  const dataUrl = state.latestReturnedImage?.dataUrl;
+  if (!dataUrl) return null;
+  const contentType = dataUrl.slice('data:'.length, dataUrl.indexOf(';'));
+  return createTabletImageSnapshot(decodeStoredImage(dataUrl), contentType);
+}
+
+function rememberLatestTabletImage(data, hash) {
+  state.latestTabletImage = createTabletImageSnapshot(data, 'image/png', hash);
+  const temporary = path.join(HISTORY_DIR, '_latest-return-' + crypto.randomBytes(8).toString('hex') + '.tmp');
+  try {
+    checkDirectory(HISTORY_DIR);
+    isRegularFile(LATEST_RETURN_FILE);
+    const file = fs.openSync(temporary, 'wx');
+    try {
+      try {
+        fs.writeFileSync(file, data);
+      } finally {
+        fs.closeSync(file);
+      }
+      fs.renameSync(temporary, LATEST_RETURN_FILE);
+    } finally {
+      if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
+    }
+  } catch (error) {
+    console.error('[LatestTabletImage Save Error]:', error.message);
+  }
+}
+
 loadHistoryFromDiskOnStartup();
+state.latestTabletImage = loadLatestTabletImage();
 
 // ==========================================
 // 4. HTTP 与 WebSocket 服务
@@ -373,27 +421,6 @@ const MIME_TYPES = {
   '.ico': 'image/x-icon'
 };
 
-function readJsonBody(req) {
-  return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', (chunk) => {
-      body += chunk;
-      if (body.length > 60 * 1024 * 1024) {
-        reject(new Error('请求体过大'));
-        req.destroy();
-      }
-    });
-    req.on('end', () => {
-      try {
-        resolve(body ? JSON.parse(body) : {});
-      } catch (e) {
-        reject(new Error('JSON 解析失败'));
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
 function sendJson(res, statusCode, data) {
   res.writeHead(statusCode, {
     'Content-Type': 'application/json; charset=utf-8',
@@ -402,17 +429,67 @@ function sendJson(res, statusCode, data) {
   res.end(JSON.stringify(data));
 }
 
+const PC_ROUTES = new Set([
+  '/pc', '/pc.html', '/api/info', '/api/pairing/revoke', '/api/settings',
+  '/api/clipboard/push', '/api/clipboard/snip-and-push', '/api/clipboard/copy-dataurl',
+  '/api/image/push', '/api/image/latest-returned', '/api/project/push-to-tablet', '/api/history/clear'
+]);
+const STATIC_PAGES = new Map([
+  ['/', 'tablet.html'],
+  ['/tablet', 'tablet.html'],
+  ['/tablet.html', 'tablet.html'],
+  ['/pc', 'pc.html'],
+  ['/pc.html', 'pc.html'],
+  ['/manifest.json', 'manifest.json']
+]);
+
 const server = http.createServer(async (req, res) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
   try {
-    const parsedUrl = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const origin = getRequestOrigin(req);
+    if (!origin) throw new HttpError(400, '无效的访问地址');
+    const parsedUrl = new URL(req.url, origin);
     const pathname = parsedUrl.pathname;
+    if (PC_ROUTES.has(pathname) && !isPcRequest(req)) {
+      throw new HttpError(403, '请在 Windows 本机打开 PC 控制台');
+    }
+    if (req.method === 'POST' && !isSameOrigin(req)) {
+      throw new HttpError(403, '请求来源无效');
+    }
+
+    if (req.method === 'GET' && pathname === '/api/pair') {
+      return sendJson(res, 200, { ok: true, paired: Boolean(access.getTabletSession(req)) });
+    }
+    if (req.method === 'POST' && pathname === '/api/pair') {
+      const { code } = await readJsonBody(req, 1024);
+      const session = access.pairTablet(code, access.getTabletSession(req));
+      res.setHeader('Set-Cookie', access.sessionCookie(session));
+      broadcastToPc({ type: 'PAIRING_UPDATED' });
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'POST' && pathname === '/api/pairing/revoke') {
+      access.revokeAll();
+      for (const [ws, client] of clients) {
+        if (client.role === 'tablet') ws.close(4001, 'Pairing revoked');
+      }
+      broadcastToPc({ type: 'PAIRING_UPDATED' });
+      broadcastClientsStatus();
+      return sendJson(res, 200, { ok: true });
+    }
 
     // API: 获取服务器状态、局域网 IP 与二维码
     if (req.method === 'GET' && pathname === '/api/info') {
       const ips = getLanAddresses();
       const selectedIp = parsedUrl.searchParams.get('ip') || ips[0].address;
-      const tabletUrl = `http://${selectedIp}:${PORT}/tablet`;
-      const qrDataUrl = await QRCode.toDataURL(tabletUrl, {
+      requireInput(ips.some(candidate => candidate.address === selectedIp), 'ip');
+      const pairing = access.getPairing();
+      const port = server.address().port;
+      const tabletUrl = `http://${selectedIp}:${port}/tablet`;
+      const pairingPath = `/tablet#pair=${pairing.code}`;
+      const pairingUrl = `${tabletUrl}#pair=${pairing.code}`;
+      const qrDataUrl = await QRCode.toDataURL(pairingUrl, {
         width: 280,
         margin: 1,
         color: { dark: '#0f172a', light: '#ffffff' }
@@ -420,38 +497,33 @@ const server = http.createServer(async (req, res) => {
 
       return sendJson(res, 200, {
         ok: true,
-        port: PORT,
+        port,
         ips,
         selectedIp,
         tabletUrl,
+        pairingUrl,
+        pairingPath,
+        pairingExpiresAt: pairing.expiresAt,
         qrDataUrl,
         autoSyncClipboard: state.autoSyncClipboard,
-        clients: getConnectedClientsSummary(),
-        currentImage: state.currentImage,
-        latestReturnedImage: state.latestReturnedImage,
-        history: state.history
+        clients: getConnectedClientsSummary()
       });
     }
 
     // API: 切换自动同步剪贴板设置
     if (req.method === 'POST' && pathname === '/api/settings') {
-      const body = await readJsonBody(req);
-      if (typeof body.autoSyncClipboard === 'boolean') {
-        state.autoSyncClipboard = body.autoSyncClipboard;
-        if (state.autoSyncClipboard) {
-          // 开启自动同步时，先记录当前剪贴板 Hash 作为基线，防止误推旧图
-          try {
-            const cur = await clipboard.getClipboardImage();
-            if (cur && cur.seq) {
-              state.lastObservedClipboardSeq = cur.seq;
-            }
-            if (cur && cur.hasImage && cur.hash) {
-              state.lastObservedClipboardHash = cur.hash;
-            }
-          } catch (_) {}
-        }
+      const body = await readJsonBody(req, 1024);
+      requireInput(typeof body.autoSyncClipboard === 'boolean', 'autoSyncClipboard');
+      state.autoSyncClipboard = body.autoSyncClipboard;
+      if (state.autoSyncClipboard) {
+        // 开启自动同步时，先记录当前剪贴板 Hash 作为基线，防止误推旧图
+        try {
+          const cur = await clipboard.getClipboardImage();
+          if (cur && cur.seq) state.lastObservedClipboardSeq = cur.seq;
+          if (cur && cur.hasImage && cur.hash) state.lastObservedClipboardHash = cur.hash;
+        } catch (_) {}
       }
-      broadcastToAll({
+      broadcastToPc({
         type: 'SETTINGS_UPDATED',
         autoSyncClipboard: state.autoSyncClipboard
       });
@@ -496,39 +568,27 @@ const server = http.createServer(async (req, res) => {
     // API: 直接从 PC 端上传/粘贴/生成图片推送到平板
     if (req.method === 'POST' && pathname === '/api/image/push') {
       const body = await readJsonBody(req);
-      if (!body.dataUrl) {
-        return sendJson(res, 400, { ok: false, error: '缺少 dataUrl 参数' });
-      }
-      const item = pushImageToTablet({
-        projectId: body.projectId || '',
-        dataUrl: body.dataUrl,
-        baseDataUrl: body.baseDataUrl || body.dataUrl,
-        drawDataUrl: body.drawDataUrl || null,
-        strokeRecords: body.strokeRecords || [],
-        annotations: body.annotations || [],
-        badgeCounter: body.badgeCounter || 1,
-        width: body.width || 0,
-        height: body.height || 0,
-        source: body.source || 'PC端手动推送'
-      });
+      requireInput(body.projectId == null || body.projectId === '', 'projectId');
+      const item = pushImageToTablet(validateImagePayload(body));
       return sendJson(res, 200, { ok: true, item });
     }
 
     // API: 将已保存的分层工程再次同步到平板（可选保留或剥离之前添加的笔画与标记）
     if (req.method === 'POST' && pathname === '/api/project/push-to-tablet') {
-      const body = await readJsonBody(req);
-      const projectId = body.projectId;
-      const stripDrawLayer = Boolean(body.stripDrawLayer);
-      if (!projectId) {
-        return sendJson(res, 400, { ok: false, error: '缺少 projectId 参数' });
-      }
-      const proj = loadProjectFromDisk(projectId) || state.history.find(x => x.projectId === projectId);
+      const body = await readJsonBody(req, 1024);
+      const projectId = requireProjectId(body.projectId);
+      requireInput(body.stripDrawLayer === undefined || typeof body.stripDrawLayer === 'boolean', 'stripDrawLayer');
+      const stripDrawLayer = body.stripDrawLayer === true;
+      const proj = loadProjectFromDisk(projectId);
       if (!proj) {
         return sendJson(res, 404, { ok: false, error: '未找到该分层工程记录' });
       }
+      if (stripDrawLayer && (!proj.hasBaseFile || !proj.baseDataUrl)) {
+        throw new HttpError(409, '该工程缺少独立底图，无法发送纯底图');
+      }
 
       const item = pushImageToTablet({
-        projectId: proj.projectId,
+        projectId: stripDrawLayer ? undefined : proj.projectId,
         dataUrl: stripDrawLayer ? proj.baseDataUrl : proj.dataUrl,
         baseDataUrl: proj.baseDataUrl,
         drawDataUrl: stripDrawLayer ? null : proj.drawDataUrl,
@@ -544,24 +604,30 @@ const server = http.createServer(async (req, res) => {
 
     // API: 平板端将编辑后的图片发送回 PC 并自动写入系统剪贴板
     if (req.method === 'POST' && pathname === '/api/image/return') {
+      const session = access.getTabletSession(req);
+      if (!session) throw new HttpError(401, '请先配对平板');
       const body = await readJsonBody(req);
-      if (!body.dataUrl) {
-        return sendJson(res, 400, { ok: false, error: '缺少 dataUrl 参数' });
-      }
-      const result = await handleTabletReturnImage(body);
+      const result = await returnImageForSession(body, session);
       return sendJson(res, 200, { ok: true, ...result });
+    }
+
+    if ((req.method === 'GET' || req.method === 'HEAD') && pathname === '/api/image/latest-returned') {
+      const image = state.latestTabletImage;
+      if (!image) throw new HttpError(404, '还没有平板回传图像');
+      res.writeHead(200, {
+        'Content-Type': image.contentType,
+        'Content-Length': image.data.length,
+        'Cache-Control': 'no-store',
+        ETag: image.etag
+      });
+      return res.end(req.method === 'HEAD' ? undefined : image.data);
     }
 
     // API: 将指定图片重新写入 PC 系统剪贴板
     if (req.method === 'POST' && pathname === '/api/clipboard/copy-dataurl') {
       const body = await readJsonBody(req);
-      if (!body.dataUrl) {
-        return sendJson(res, 400, { ok: false, error: '缺少 dataUrl' });
-      }
-      const tmpPath = path.join(HISTORY_DIR, '_clipboard_tmp.png');
-      fs.writeFileSync(tmpPath, dataUrlToBuffer(body.dataUrl));
-      state.suppressClipboardPollUntil = Date.now() + 3000;
-      const setRes = await clipboard.setClipboardImageFromFile(tmpPath);
+      readPng(body.dataUrl, 'dataUrl');
+      const setRes = await copyPngToClipboard(body.dataUrl);
       if (!setRes.ok) {
         return sendJson(res, 500, { ok: false, error: setRes.error || '写入剪贴板失败' });
       }
@@ -580,9 +646,12 @@ const server = http.createServer(async (req, res) => {
       state.history = [];
       state.currentImage = null;
       state.latestReturnedImage = null;
+      state.latestTabletImage = null;
+      access.clearProjects();
 
       try {
-        if (fs.existsSync(PROJECTS_DIR)) {
+        checkDirectory(HISTORY_DIR);
+        if (checkDirectory(PROJECTS_DIR)) {
           fs.rmSync(PROJECTS_DIR, { recursive: true, force: true });
           fs.mkdirSync(PROJECTS_DIR, { recursive: true });
         }
@@ -590,44 +659,35 @@ const server = http.createServer(async (req, res) => {
         for (const name of entries) {
           if (name === 'projects') continue;
           const fullPath = path.join(HISTORY_DIR, name);
-          if (fs.statSync(fullPath).isFile()) {
+          if (fs.lstatSync(fullPath).isFile()) {
             fs.unlinkSync(fullPath);
           }
         }
+        isRegularFile(INDEX_FILE);
         fs.writeFileSync(INDEX_FILE, '[]', 'utf8');
       } catch (e) {
         console.error('[ClearHistory Error]:', e.message);
       }
 
-      broadcastToAll({ type: 'HISTORY_CLEARED' });
+      broadcastToPc({ type: 'HISTORY_CLEARED' });
       return sendJson(res, 200, { ok: true });
     }
 
-    // 路由映射
-    let filePath;
-    if (pathname === '/' || pathname === '/tablet') {
-      filePath = path.join(PUBLIC_DIR, 'tablet.html');
-    } else if (pathname === '/pc') {
-      filePath = path.join(PUBLIC_DIR, 'pc.html');
-    } else {
-      const safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
-      filePath = path.join(PUBLIC_DIR, safePath);
-    }
-
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-      const ext = path.extname(filePath).toLowerCase();
+    const page = STATIC_PAGES.get(pathname);
+    if (page && (req.method === 'GET' || req.method === 'HEAD')) {
+      const content = fs.readFileSync(path.join(PUBLIC_DIR, page));
       res.writeHead(200, {
-        'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
-        'Cache-Control': 'no-cache'
+        'Content-Type': MIME_TYPES[path.extname(page)],
+        'Cache-Control': 'no-store'
       });
-      fs.createReadStream(filePath).pipe(res);
+      res.end(req.method === 'HEAD' ? undefined : content);
     } else {
       res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
       res.end('404 Not Found');
     }
   } catch (err) {
-    console.error('[HTTP Error]:', err);
-    sendJson(res, 500, { ok: false, error: err.message });
+    if (!(err instanceof HttpError)) console.error('[HTTP Error]:', err);
+    sendJson(res, err.status || 500, { ok: false, error: err instanceof HttpError ? err.message : '服务器操作失败' });
   }
 });
 
@@ -635,17 +695,35 @@ const server = http.createServer(async (req, res) => {
 // 5. WebSocket 实时双向通讯
 // ==========================================
 const wss = new WebSocketServer({
-  server,
-  maxPayload: 60 * 1024 * 1024
+  noServer: true,
+  maxPayload: MAX_JSON_BYTES
 });
 
-const clients = new Map(); // ws -> { id, role, deviceName, ip, connectedAt }
+const clients = new Map();
+
+server.on('upgrade', (req, socket, head) => {
+  let url;
+  try {
+    url = new URL(req.url, 'http://localhost');
+  } catch {
+    socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+  const role = url.searchParams.get('role') || 'tablet';
+  const tabletSession = role === 'tablet' ? access.getTabletSession(req) : null;
+  const allowed = role === 'pc' ? isPcRequest(req) : Boolean(tabletSession);
+  if (!isSameOrigin(req) || url.pathname !== '/' || !allowed) {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req, role, tabletSession, url));
+});
 
 function getConnectedClientsSummary() {
   const tablets = [];
   let pcCount = 0;
   for (const info of clients.values()) {
-    if (info.role === 'tablet') {
+    if (info.role === 'tablet' && access.getSession(info.token)) {
       tablets.push({
         id: info.id,
         deviceName: info.deviceName,
@@ -659,17 +737,32 @@ function getConnectedClientsSummary() {
   return { pcCount, tabletCount: tablets.length, tablets };
 }
 
-function broadcastToAll(payload) {
+function broadcastToPc(payload) {
   const msg = JSON.stringify(payload);
-  for (const ws of clients.keys()) {
-    if (ws.readyState === 1) {
-      ws.send(msg);
-    }
+  for (const [ws, client] of clients) {
+    if (client.role === 'pc' && ws.readyState === 1) ws.send(msg);
+  }
+}
+
+function tabletProjectView(item) {
+  if (!item) return null;
+  const { projectId, baseDataUrl, drawDataUrl, strokeRecords, annotations, badgeCounter, source } = item;
+  return { projectId, baseDataUrl, drawDataUrl, strokeRecords, annotations, badgeCounter, source };
+}
+
+function broadcastProjectToTablets(item) {
+  const message = JSON.stringify({ type: 'IMAGE_TO_TABLET', item: tabletProjectView(item) });
+  for (const [ws, client] of clients) {
+    if (client.role !== 'tablet' || ws.readyState !== 1) continue;
+    const session = access.getSession(client.token);
+    if (!session) continue;
+    access.grantProject(session, item.projectId);
+    ws.send(message);
   }
 }
 
 function broadcastClientsStatus() {
-  broadcastToAll({
+  broadcastToPc({
     type: 'CLIENTS_STATUS',
     clients: getConnectedClientsSummary()
   });
@@ -688,8 +781,7 @@ function pushImageToTablet({
   source
 }) {
   const cleanBase = baseDataUrl || dataUrl;
-  const baseHash8 = crypto.createHash('sha256').update(dataUrlToBuffer(cleanBase)).digest('hex').slice(0, 8);
-  const pid = projectId || `proj_${Date.now()}_${baseHash8}`;
+  const pid = projectId || createProjectId();
 
   const item = {
     id: pid,
@@ -712,11 +804,47 @@ function pushImageToTablet({
   state.currentImage = item;
   upsertProjectHistory(item);
 
-  broadcastToAll({
+  broadcastToPc({
     type: 'IMAGE_TO_TABLET',
     item
   });
+  broadcastProjectToTablets(item);
   return item;
+}
+
+function returnImageForSession(body, session) {
+  if (!access.getSession(session.token)) throw new HttpError(401, '请重新配对平板');
+  const projectId = body.projectId === '' || body.projectId === undefined ? undefined : requireProjectId(body.projectId);
+  if (projectId && !session.projectIds.has(projectId)) {
+    throw new HttpError(403, '当前平板没有编辑该工程的权限');
+  }
+  const payload = validateImagePayload(body);
+  if (projectId) {
+    const project = getProjectPaths(projectId);
+    if (!project || !isRegularFile(project.metaPath)) throw new HttpError(404, '该工程已不存在');
+    if (!payload.baseDataUrl && isRegularFile(project.basePath)) {
+      payload.baseDataUrl = encodeStoredImage(fs.readFileSync(project.basePath));
+    }
+  }
+  const id = projectId || createProjectId();
+  access.grantProject(session, id);
+  return handleTabletReturnImage({ ...payload, projectId: id });
+}
+
+async function copyPngToClipboard(dataUrl) {
+  checkDirectory(HISTORY_DIR);
+  const tempPath = path.join(HISTORY_DIR, '_clipboard_' + crypto.randomBytes(12).toString('hex') + '.png');
+  fs.writeFileSync(tempPath, decodeStoredImage(dataUrl), { flag: 'wx' });
+  state.suppressClipboardPollUntil = Date.now() + 3000;
+  try {
+    return await clipboard.setClipboardImageFromFile(tempPath);
+  } finally {
+    try {
+      fs.unlinkSync(tempPath);
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.error('[Clipboard Temp Error]:', error);
+    }
+  }
 }
 
 async function handleTabletReturnImage({
@@ -732,21 +860,18 @@ async function handleTabletReturnImage({
   promptHint,
   auto
 }) {
-  // 确定关联的工程 ID
-  const pid = projectId || (state.currentImage && state.currentImage.projectId) || `proj_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
   const item = {
-    id: pid,
-    projectId: pid,
+    id: projectId,
+    projectId,
     dataUrl, // 叠加合成后的版本 merged.png (用于写入剪贴板和总览)
-    baseDataUrl: baseDataUrl || (state.currentImage && state.currentImage.baseDataUrl) || dataUrl,
+    baseDataUrl: baseDataUrl || dataUrl,
     drawDataUrl: drawDataUrl || null, // 额外绘制的独立透明层 draw.png
     hasDrawLayer: Boolean(drawDataUrl),
     strokeRecords: Array.isArray(strokeRecords) ? strokeRecords : [],
     badgeCounter: badgeCounter || 1,
     width: width || 0,
     height: height || 0,
-    source: auto ? '平板实时同步(已分层保存)' : '安卓平板回传(已分层保存)',
+    source: auto ? '平板实时同步(已分层保存)' : '平板回传(已分层保存)',
     direction: 'tablet-to-pc',
     auto: Boolean(auto),
     annotations: Array.isArray(annotations) ? annotations : [],
@@ -756,6 +881,7 @@ async function handleTabletReturnImage({
 
   // 分层写入磁盘: base.png (原图) + draw.png (额外绘制层) + merged.png (合成图) + meta.json
   const saved = saveLayeredProjectToDisk(item);
+  rememberLatestTabletImage(saved.merged, saved.mergedHash);
 
   // 写入剪贴板期间暂停自动轮询，防止竞态回环
   state.suppressClipboardPollUntil = Date.now() + 3000;
@@ -773,7 +899,7 @@ async function handleTabletReturnImage({
       state.lastReturnedFromTabletHash = clipboardHash;
       state.lastObservedClipboardHash = clipboardHash;
     }
-    console.log(`[Tablet->PC] pid=${pid} auto=${Boolean(auto)} seq=${setRes.seq} hash=${clipboardHash.slice(0, 8)}`);
+    console.log(`[Tablet->PC] pid=${projectId} auto=${Boolean(auto)} seq=${setRes.seq} hash=${clipboardHash.slice(0, 8)}`);
   } else {
     console.warn(`[Tablet->PC] 写入剪贴板失败:`, setRes && setRes.error);
   }
@@ -787,7 +913,7 @@ async function handleTabletReturnImage({
   state.latestReturnedImage = item;
   upsertProjectHistory(item);
 
-  broadcastToAll({
+  broadcastToPc({
     type: 'IMAGE_RETURNED_TO_PC',
     item
   });
@@ -795,15 +921,16 @@ async function handleTabletReturnImage({
   return { item, clipboardWritten: Boolean(setRes.ok) };
 }
 
-wss.on('connection', (ws, req) => {
-  const parsedUrl = new URL(req.url, 'http://localhost');
-  const role = parsedUrl.searchParams.get('role') || 'tablet';
-  const deviceName = parsedUrl.searchParams.get('device') || (role === 'tablet' ? 'Android 平板' : 'PC 控制台');
+wss.on('connection', (ws, req, role, session, parsedUrl) => {
+  const requestedDevice = parsedUrl.searchParams.get('device') || '';
+  const deviceName = requestedDevice.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 64) ||
+    (role === 'tablet' ? '平板' : 'PC 控制台');
   const rawIp = (req.socket.remoteAddress || '').replace(/^::ffff:/, '');
 
   const clientInfo = {
     id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     role,
+    token: session?.token,
     deviceName,
     ip: rawIp,
     connectedAt: new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -811,24 +938,31 @@ wss.on('connection', (ws, req) => {
   clients.set(ws, clientInfo);
   broadcastClientsStatus();
 
-  // 初次连接发送初始化状态与当前画布图片
+  if (session && state.currentImage) access.grantProject(session, state.currentImage.projectId);
   ws.send(JSON.stringify({
     type: 'INIT_STATE',
-    clientInfo,
-    autoSyncClipboard: state.autoSyncClipboard,
-    clients: getConnectedClientsSummary(),
-    currentImage: state.currentImage,
-    latestReturnedImage: state.latestReturnedImage,
-    history: state.history
+    ...(role === 'pc' ? {
+      autoSyncClipboard: state.autoSyncClipboard,
+      clients: getConnectedClientsSummary(),
+      currentImage: state.currentImage,
+      latestReturnedImage: state.latestReturnedImage,
+      history: state.history
+    } : { currentImage: tabletProjectView(state.currentImage) })
   }));
 
-  ws.on('message', async (raw) => {
+  ws.on('message', async (raw, isBinary) => {
     try {
-      const msg = JSON.parse(raw.toString());
+      if (session && !access.getSession(session.token)) {
+        ws.close(4001, 'Pairing expired');
+        return;
+      }
+      if (isBinary) throw new HttpError(400, '只接受 JSON 消息');
+      const msg = parseJson(raw.toString());
       if (msg.type === 'PING') {
         ws.send(JSON.stringify({ type: 'PONG', ts: msg.ts }));
       } else if (msg.type === 'RETURN_IMAGE_TO_PC') {
-        const res = await handleTabletReturnImage(msg);
+        if (!session) throw new HttpError(403, '只有已配对平板可以回传画布');
+        const res = await returnImageForSession(msg, session);
         ws.send(JSON.stringify({
           type: 'RETURN_ACK',
           ok: true,
@@ -836,17 +970,34 @@ wss.on('connection', (ws, req) => {
           clipboardWritten: res.clipboardWritten,
           itemId: res.item.id
         }));
+      } else {
+        throw new HttpError(400, '未知的消息类型');
       }
     } catch (e) {
-      console.error('[WS Message Error]:', e);
+      if (!(e instanceof HttpError)) console.error('[WS Message Error]:', e);
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify({
+          type: 'RETURN_ACK',
+          ok: false,
+          status: e.status || 500,
+          error: e instanceof HttpError ? e.message : '服务器操作失败'
+        }));
+      }
     }
   });
 
+  ws.on('error', error => console.warn('[WebSocket Error]:', error.message));
   ws.on('close', () => {
     clients.delete(ws);
     broadcastClientsStatus();
   });
 });
+
+setInterval(() => {
+  for (const [ws, client] of clients) {
+    if (client.role === 'tablet' && !access.getSession(client.token)) ws.close(4001, 'Pairing expired');
+  }
+}, 30000);
 
 // ==========================================
 // 6. 剪贴板自动监听与截图完成检测
@@ -931,11 +1082,12 @@ function watchSnipCompletion() {
 // ==========================================
 // 7. 启动服务并打印终端引导
 // ==========================================
-server.listen(PORT, '0.0.0.0', async () => {
+server.listen(PORT, '0.0.0.0', () => {
   const ips = getLanAddresses();
   const primaryIp = ips[0].address;
-  const pcUrl = `http://localhost:${PORT}/pc`;
-  const tabletUrl = `http://${primaryIp}:${PORT}/tablet`;
+  const port = server.address().port;
+  const pcUrl = `http://localhost:${port}/pc`;
+  const tabletUrl = `http://${primaryIp}:${port}/tablet`;
 
   console.log('\n============================================================');
   console.log('🎨 AI 创作平板助手 (PC + Android 平板协同工作台) 已启动！');
@@ -945,13 +1097,9 @@ server.listen(PORT, '0.0.0.0', async () => {
   if (ips.length > 1) {
     console.log('\n🌐 检测到的所有局域网网卡 IP:');
     ips.forEach((item) => {
-      console.log(`   - ${item.name}: http://${item.address}:${PORT}/tablet ${item.isVirtual ? '(虚拟网卡)' : '(推荐)'}`);
+      console.log(`   - ${item.name}: http://${item.address}:${port}/tablet ${item.isVirtual ? '(虚拟网卡)' : '(推荐)'}`);
     });
   }
   console.log('============================================================\n');
-  try {
-    const qrTerminal = await QRCode.toString(tabletUrl, { type: 'terminal', small: true });
-    console.log('📱 请确保安卓平板与 PC 处于同一 Wi-Fi/局域网，扫码直达平板画布：\n');
-    console.log(qrTerminal);
-  } catch (_) {}
+  console.log('📱 请在本机 PC 控制台获取一次性配对二维码。');
 });

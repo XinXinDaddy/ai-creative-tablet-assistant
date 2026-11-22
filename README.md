@@ -27,7 +27,7 @@
     - `draw.png`：额外绘制透明图层
     - `merged.png`：叠加合成图（专用于写入 PC 系统剪贴板）
     - `meta.json`：元数据与独立矢量笔画栈 (`strokeRecords`)
-  - 再次发回平板编辑时，可在平板「📑 笔画与标记」面板**逐条移除之前添加的笔画/标记**，或在 PC 端一键「🧹 仅发纯净底图到平板」。
+  - 再次发回平板编辑时，可在「📑 笔画与标记」面板**逐条移除之前添加的笔画/标记**。PC 端的「🧹 仅发纯净底图到平板」会创建独立的底图工程，保留原工程及其图层。
 
 ---
 
@@ -53,8 +53,16 @@ npm start
 
 启动后：
 1. 在 PC 浏览器访问 `http://localhost:3680/pc` 打开 **PC 协同控制台**；
-2. 用平板浏览器（Safari / Chrome / Edge）扫描控制台左侧二维码（或访问控制台显示的局域网地址 `http://<你的局域网IP>:3680/tablet`）；
+2. 用平板浏览器（Safari / Chrome / Edge）扫描控制台左侧二维码，或在平板上打开通过「复制配对链接」获取的链接。链接一次有效，5 分钟后过期，使用后控制台自动更新二维码；
 3. 开始截图、手绘标注，完成后直接切换到你的 AI Agent 聊天框按 `Ctrl + V` 粘贴图片即可。
+
+### 在 ComfyUI 中读取回传图
+
+1. 将 [`comfyui/ai_creative_tablet_assistant`](comfyui/ai_creative_tablet_assistant/) 文件夹复制到 `ComfyUI/custom_nodes/` 并重启 ComfyUI。平板助手与 ComfyUI 在同一台电脑运行。
+2. 在 ComfyUI 搜索 **读取平板回传图像**（`Tablet Return Image`）。端口默认为 `3680`。
+3. 平板回传画布后，打开的 ComfyUI 工作流会在节点内自动更新预览。运行工作流时，`image` 端口会把最新的完整图像交给保存或图生图节点。自动预览需要平板助手提供单图读取接口。
+
+节点读取最近一次回传的合成图，包括底图和标注。新版平板助手保留这张图供重启后继续使用，清空历史也会清空它。仍在运行的早期配对版服务可以继续使用本机连接读取。
 
 ---
 
@@ -62,9 +70,14 @@ npm start
 
 ```text
 ├── server.js                 # Node.js HTTP + WebSocket 服务、分层工程存储与剪贴板调度
+├── access.js                 # 本机权限与平板配对
+├── input.js                  # 工程、图像与笔画输入校验
 ├── clipboard-bridge.ps1      # 常驻内存的 Windows -STA PowerShell 剪贴板高速桥接器
 ├── 启动AI创作助手.bat          # Windows 一键启动脚本
 ├── package.json              # 项目依赖配置 (ws, qrcode)
+├── comfyui/
+│   └── ai_creative_tablet_assistant/ # ComfyUI 自定义节点与自动预览
+├── test/                     # 配对、存储与图像接口回归测试
 └── public/
     ├── pc.html               # PC 端协同控制台
     ├── tablet.html           # 平板端全屏画布 PWA（兼容 iPad / 安卓平板）
@@ -73,10 +86,13 @@ npm start
 
 ---
 
-## ⚠️ 安全与隐私提示
+## 🔒 配对、安全与隐私
 
-- 本工具为本地局域网明文 HTTP / WebSocket 服务（默认端口 `3680`），**请仅在个人或受信任的局域网 Wi-Fi 环境下使用**，勿将端口直接暴露至公网。
+- Windows 本机可以打开 PC 控制台、通过剪贴板导入图像和管理历史。配对的平板可以接收当前画布并回传获准编辑的工程。配对会话保存在浏览器中，最长 24 小时，重启服务或在控制台点击「解除全部平板配对」会使其失效。
+- 本工具为本地局域网明文 HTTP / WebSocket 服务（默认端口 `3680`）。图片和配对凭据通过明文网络传输，**请在个人或受信任的局域网 Wi-Fi 环境使用**。
 - `.gitignore` 已默认忽略 `history/` 与 `node_modules/`，不会将本地截图与工程缓存提交到 Git 仓库。
+
+运行 `npm test` 可验证配对授权、输入校验、纯底图重发和 ComfyUI 图像读取接口。测试使用临时工程目录和模拟剪贴板。
 
 ## 📄 License
 

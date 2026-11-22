@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+__pycache__/
 
 # User clipboard history, layered projects & temp files (contains personal screenshots)
 history/
