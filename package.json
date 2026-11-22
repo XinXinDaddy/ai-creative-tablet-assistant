@@ -1,6 +1,6 @@
 {
   "name": "ai-creative-tablet-assistant",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "AI创作平板助手 - PC与安卓平板局域网协同视觉Prompt标注与绘画工具",
   "main": "server.js",
   "scripts": {

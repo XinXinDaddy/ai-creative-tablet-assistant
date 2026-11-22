@@ -58,11 +58,13 @@ npm start
 
 ### 在 ComfyUI 中读取回传图
 
-1. 将 [`comfyui/ai_creative_tablet_assistant`](comfyui/ai_creative_tablet_assistant/) 文件夹复制到 `ComfyUI/custom_nodes/` 并重启 ComfyUI。平板助手与 ComfyUI 在同一台电脑运行。
+1. 从 [GitHub Releases](https://github.com/XinXinDaddy/ai-creative-tablet-assistant/releases/latest) 下载 ComfyUI 节点 ZIP。解压后将 `ai_creative_tablet_assistant` 文件夹复制到 `ComfyUI/custom_nodes/`，重启 ComfyUI 并刷新浏览器页面。也可直接复制仓库中的同名文件夹。平板助手与 ComfyUI 在同一台电脑运行。
 2. 在 ComfyUI 搜索 **读取平板回传图像**（`Tablet Return Image`）。端口默认为 `3680`。
-3. 平板回传画布后，打开的 ComfyUI 工作流会在节点内自动更新预览。运行工作流时，`image` 端口会把最新的完整图像交给保存或图生图节点。自动预览需要平板助手提供单图读取接口。
+3. 保持含该节点的工作流在前台。平板回传画布后，节点内的预览会自动更新。需要把完整图像交给保存或图生图节点时，连接 `image` 输出并运行工作流。自动预览需要平板助手 v1.1.0 或更新版。
 
 节点读取最近一次回传的合成图，包括底图和标注。新版平板助手保留这张图供重启后继续使用，清空历史也会清空它。仍在运行的早期配对版服务可以继续使用本机连接读取。
+
+[ComfyUI 节点安装与使用说明](comfyui/ai_creative_tablet_assistant/README.md)
 
 ---
 
